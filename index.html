@@ -159,7 +159,7 @@ td.desc{min-width:320px;color:var(--ink-2);font-size:13px}
     </div>
     <div class="drop" id="dropPerson">
       <h2>人員資料 <span class="opt">選填</span></h2>
-      <p>含「人員編號」與自訂標籤欄位的人員檔，會依人員編號併入分數資料。</p>
+      <p>含「人員編號」與自訂標籤欄位的人員檔。校標分析的分群欄位都從這裡來。</p>
       <div class="status" id="stPerson"></div>
       <input type="file" accept=".xlsx,.xls,.csv" id="fPerson" aria-label="上傳人員資料">
     </div>
@@ -314,11 +314,12 @@ function build(){
   const pmap=new Map();let pHeaders=[];
   if(S.person){pHeaders=S.person.headers;for(const p of S.person.rows)pmap.set(p['人員編號'],p)}
   const sH=S.score.headers;
-  const extra=pHeaders.filter(h=>!sH.includes(h)&&h!=='人員編號');
+  const pKeys=pHeaders.filter(h=>h!=='人員編號');
   let matched=0;
   const all=S.score.rows.map(r=>{
     const o={...r};const p=pmap.get(r['人員編號']);
-    if(p){matched++;for(const h of extra)o[h]=p[h]}
+    if(p)matched++;
+    for(const h of pKeys)o['P:'+h]=p?p[h]:null;
     for(const it of ITEMS)o[it]=num(o[it]);
     for(const d of DIMS){const v=num(o[d.name]);o[d.name]=isNaN(v)?r0(avg(d.items.map(i=>o[i]))):v}
     o.__age=ageOf(o);
@@ -329,14 +330,15 @@ function build(){
   S.all=all;
   if(S.person){$('#stPerson').textContent=$('#stPerson').textContent.split('｜對應')[0]+`｜對應到 ${matched} 筆`;}
   // fields for grouping
-  const cand=[...sH,...extra].filter(h=>!SKIP_FIELDS.has(h)&&!/^欄\d+$/.test(h));
-  cand.push('__ageBin','__gen');
-  S.fieldsAll=cand;
+  const okH=h=>!SKIP_FIELDS.has(h)&&!/^欄\d+$/.test(h);
+  S.sH=sH;
+  S.benchAll=pKeys.filter(okH).map(h=>'P:'+h);
+  S.fieldsAll=[...sH.filter(okH),...S.benchAll,'__ageBin','__gen'];
   $('#app').hidden=false;$('#emptyState').hidden=true;
   buildExplain();
   applyFilter();
 }
-function fieldLabel(f){return f==='__ageBin'?'年齡區間（自動）':f==='__gen'?'世代（依年齡自動）':f}
+function fieldLabel(f){if(f.startsWith('P:')){const h=f.slice(2);return S.sH&&S.sH.includes(h)?h+'（人員檔）':h}return f==='__ageBin'?'年齡區間（自動）':f==='__gen'?'世代（依年齡自動）':f}
 function buildExplain(){
   const g=$('#explainGrp');g.innerHTML='';
   if(!S.score.headers.includes('報表解釋力'))return;
@@ -351,9 +353,11 @@ function buildExplain(){
 function applyFilter(){
   S.rows=S.all.filter(r=>!S.explainOff.has(r['報表解釋力']??'(空白)'));
   $('#nLabel').textContent=`有效資料 N＝${S.rows.length}`;
-  S.fields=S.fieldsAll.filter(f=>{const u=new Set(S.rows.map(r=>r[f]).filter(v=>v!=null&&v!==''));return u.size>=1&&u.size<=60});
-  if(!S.benchUserSet||!S.fields.includes(S.benchField)){
-    S.benchField=S.fields.find(f=>f.startsWith('[自訂]'))||S.fields.find(f=>f==='部門')||S.fields[0];
+  const okU=f=>{const u=new Set(S.rows.map(r=>r[f]).filter(v=>v!=null&&v!==''));return u.size>=1&&u.size<=60};
+  S.fields=S.fieldsAll.filter(okU);
+  S.benchFields=S.benchAll.filter(okU);
+  if(!S.benchUserSet||!S.benchFields.includes(S.benchField)){
+    S.benchField=S.benchFields.find(f=>f.startsWith('P:[自訂]'))||S.benchFields[0]||null;
   }
   render();
 }
@@ -462,7 +466,7 @@ function renderBg(){
   if(S.score.headers.includes('性別'))specs.push(['性別','性別',['男','女']]);
   if(S.score.headers.includes('教育'))specs.push(['教育','教育程度',['國中','高中職','專科','大學','碩士','博士']]);
   specs.push(['__ageBin','年齡區間',['20歲以下','21-30歲','31-40歲','41-50歲','50歲以上']]);
-  const genF=S.fields.find(f=>f!=='__gen'&&/世代/.test(f))||'__gen';
+  const genF=S.fields.find(f=>f!=='__gen'&&/世代/.test(fieldLabel(f)))||'__gen';
   specs.push([genF,'世代',['20世代','30世代','40世代','50世代','60及以上']]);
   for(const f of S.extraPies)specs.push([f,fieldLabel(f),null,true]);
   for(const [f,t,order,removable] of specs){
@@ -527,11 +531,11 @@ function benchRerender(){clearTimeout(benchTimer);benchTimer=setTimeout(()=>{des
 function renderEditor(){
   const ed=$('#editor');ed.innerHTML='';
   const sel=el('select',{id:'benchField'});
-  for(const f of S.fields){const u=new Set(S.rows.map(r=>r[f]).filter(v=>v!=null&&v!=='')).size;sel.append(el('option',{value:f,text:`${fieldLabel(f)}（${u} 類）`}))}
+  for(const f of S.benchFields){const u=new Set(S.rows.map(r=>r[f]).filter(v=>v!=null&&v!=='')).size;sel.append(el('option',{value:f,text:`${f.slice(2)}（${u} 類）`}))}
   sel.value=S.benchField;
   sel.addEventListener('change',()=>{S.benchField=sel.value;S.benchUserSet=true;renderBench()});
   ed.append(el('label',{class:'f',for:'benchField',text:'校標欄位'}),sel);
-  ed.append(el('p',{class:'hint',text:'改「顯示名稱」可重新命名；多個值填同一個名稱就會合併成一群。取消勾選即排除，箭頭調整順序。'}));
+  ed.append(el('p',{class:'hint',text:'欄位來自人員資料。改「顯示名稱」可重新命名；多個值填同一個名稱就會合併成一群。取消勾選即排除，箭頭調整順序。'}));
   const cfg=cfgFor(S.benchField);
   const counts=countBy(S.rows,S.benchField);const cmap=new Map(counts.labels.map((l,i)=>[l,counts.data[i]]));
   const ul=el('ul',{class:'gl'});
@@ -555,10 +559,17 @@ function renderEditor(){
     el('button',{class:'btn',type:'button',text:'依人數排序',onclick:()=>{cfg.sort((a,b)=>(cmap.get(b.raw)||0)-(cmap.get(a.raw)||0));renderEditor();benchRerender()}}),
     el('button',{class:'btn',type:'button',text:'還原此欄位',onclick:()=>{delete S.benchCfg[S.benchField];renderEditor();benchRerender()}})));
 }
-function renderBench(){destroy('bench');renderEditor();renderBenchOut()}
+function renderBench(){
+  destroy('bench');
+  if(!S.benchField){
+    $('#editor').innerHTML='';$('#editor').hidden=true;
+    $('#benchOut').innerHTML='';$('#benchOut').append(el('div',{class:'empty',text:S.person?'人員資料裡沒有可用的分群欄位（每欄需 1–60 類）。':'校標欄位來自人員資料，請先上傳人員資料。'}));
+    return;
+  }
+  $('#editor').hidden=false;renderEditor();renderBenchOut()}
 function renderBenchOut(){
   const out=$('#benchOut');out.innerHTML='';
-  const f=S.benchField;const FL=fieldLabel(f).replace(/^\[自訂\]/,'');
+  const f=S.benchField;const FL=f.slice(2).replace(/^\[自訂\]/,'');
   const groups=groupsFor(f);
   if(!groups.length){out.append(el('div',{class:'empty',text:'這個欄位目前沒有可用的分群，請在左側勾選至少一群。'}));return}
   const whole=stats(S.rows,S.th);
@@ -619,7 +630,7 @@ $('#zipBtn').addEventListener('click',async()=>{
       zip.file(n,b);
     }
     const blob=await zip.generateAsync({type:'blob'});
-    const tabName={bg:'背景資訊',overall:'整體',bench:'校標_'+fieldLabel(S.benchField).replace(/^\[自訂\]/,'')}[S.tab];
+    const tabName={bg:'背景資訊',overall:'整體',bench:'校標_'+String(S.benchField||'').slice(2).replace(/^\[自訂\]/,'')}[S.tab];
     await save(blob,safe(`MCES_${tabName}`)+'.zip');
   }finally{btn.disabled=false;btn.textContent='下載本頁所有圖（ZIP）'}
 });
